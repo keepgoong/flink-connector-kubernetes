@@ -45,6 +45,7 @@ public class KubernetesSource
     private final String nameSpace;
     private final String fieldSelector;
     private final String labelSelector;
+    private SharedInformerFactory factory;
     private final DeserializationSchema<RowData> deserializer;
 
     public KubernetesSource(
@@ -140,7 +141,7 @@ public class KubernetesSource
                 apiClient.setHttpClient(httpClient);
 
                 // 创建informerFactory并重写SharedIndexInformer方法
-                SharedInformerFactory factory = new SharedInformerFactory(apiClient){
+                factory = new SharedInformerFactory(apiClient){
                     @Override
                     public synchronized <ApiType extends KubernetesObject, ApiListType extends KubernetesListObject> SharedIndexInformer<ApiType> sharedIndexInformerFor(ListerWatcher<ApiType, ApiListType> listerWatcher, Class<ApiType> apiTypeClass, long resyncPeriodInMillis, BiConsumer<Class<ApiType>, Throwable> exceptionHandler) {
                         SharedIndexInformer<ApiType> informer =
@@ -331,6 +332,7 @@ public class KubernetesSource
         @Override
         public void close() throws Exception {
             try {
+                factory.stopAllRegisteredInformers();
                 queue.clear();
             } catch (Throwable t) {
                 System.out.println(t);
