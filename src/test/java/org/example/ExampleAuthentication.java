@@ -3,21 +3,14 @@ package org.example;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.table.api.Table;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
-
-public class KubernetesConnectorExample {
-
+public class ExampleAuthentication {
     public static void main(String[] args) throws Exception {
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
         env.setParallelism(1);
 
         StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
-        String authenticationType = "ClientCertificate";
-        boolean ssl = true;
-        String caPath = "./ca.txt";
-        String clientCapath = "./client-ca.txt";
-        String clientKeypath = "./client-key.txt";
-        String basePath = "https://10.15.0.21:6443";
-        String tokenPath = "./token.txt";
+        String authenticationType = "Kubeconfig";
+        // config 文件路径
         String configPath = "./config";
         String sourceType = "Pod";
 //        String nameSpace = "";
@@ -34,28 +27,10 @@ public class KubernetesConnectorExample {
                         + "  'connector' = 'kubernetes',\n"
                         + "  'authentication-type' = '"
                         + authenticationType
-                        + "',\n"
-                        + "  'base-path' = '"
-                        + basePath
                         // config文件路径
                         + "',\n"
                         + "  'config-path' = '"
                         + configPath
-                        + "',\n"
-                        + "  'ssl' = '"
-                        + ssl
-                        + "',\n"
-                        + "  'ca-path' = '"
-                        + caPath
-                        + "',\n"
-                        + "  'client-ca-path' = '"
-                        + clientCapath
-                        + "',\n"
-                        + "  'client-key-path' = '"
-                        + clientKeypath
-                        + "',\n"
-                        + "  'token-path' = '"
-                        + tokenPath
                         + "',\n"
                         + "  'source-type' = '"
                         + sourceType

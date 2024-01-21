@@ -287,6 +287,7 @@ public class FlinkSharedIndexInformer <
             if (transform != null) {
                 obj = transform.transform(obj);
             }
+            // System.out.println(deltaType);
             switch (deltaType) {
                 case Sync:
                 case Added:
@@ -310,7 +311,8 @@ public class FlinkSharedIndexInformer <
                 case Deleted:
                     this.indexer.delete((ApiType) obj);
                     this.processor.distribute(new ProcessorListener.DeleteNotification(obj), false);
-                    if(this.queue != null) this.queue.add(new Watch.Response("DELETE",obj));
+                    System.out.println(obj.getKind());
+                    if(this.queue != null) this.queue.add(new Watch.Response("DELETE", obj));
                     break;
             }
         }

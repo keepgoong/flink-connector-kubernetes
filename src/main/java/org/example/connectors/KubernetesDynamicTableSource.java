@@ -15,6 +15,13 @@ import org.apache.flink.table.types.DataType;
 
 public class KubernetesDynamicTableSource implements ScanTableSource {
 
+    private final String authenticationType;
+    private final String basePath;
+    private final Boolean ssl;
+    private final String caPath;
+    final String clientCaPath;
+    final String clientKeyPath;
+    private final String tokenPath;
     private final String configFile;
     private final String sourceType;
     private final String nameSpace;
@@ -24,6 +31,13 @@ public class KubernetesDynamicTableSource implements ScanTableSource {
     private final DataType producedDataType;
 
     public KubernetesDynamicTableSource(
+            String authenticationType,
+            String basePath,
+            Boolean ssl,
+            String caPath,
+            String clientCaPath,
+            String clientKeyPath,
+            String tokenPath,
             String configFile,
             String sourceType,
             String nameSpace,
@@ -31,6 +45,13 @@ public class KubernetesDynamicTableSource implements ScanTableSource {
             String labelSelector,
             DecodingFormat<DeserializationSchema<RowData>> decodingFormat,
             DataType producedDataType){
+        this.authenticationType = authenticationType;
+        this.basePath =  basePath;
+        this.ssl = ssl;
+        this.caPath = caPath;
+        this.clientCaPath = clientCaPath;
+        this.clientKeyPath = clientKeyPath;
+        this.tokenPath = tokenPath;
         this.configFile = configFile;
         this.sourceType = sourceType;
         this.nameSpace = nameSpace;
@@ -53,8 +74,7 @@ public class KubernetesDynamicTableSource implements ScanTableSource {
                 final DeserializationSchema<RowData> deserializer =
                         decodingFormat.createRuntimeDecoder(
                                 runtimeProviderContext, producedDataType);
-                final KubernetesSource kubernetesSource = new KubernetesSource(configFile, sourceType, nameSpace, fieldSelector, labelSelector, deserializer);
-                System.out.println("create scanruntime");
+                final KubernetesSource kubernetesSource = new KubernetesSource(authenticationType, basePath, ssl, caPath, clientCaPath, clientKeyPath, tokenPath, configFile, sourceType, nameSpace, fieldSelector, labelSelector, deserializer);
                 return execEnv.fromSource(
                                 kubernetesSource, WatermarkStrategy.noWatermarks(), "kubernetesSource")
                         // kubernetesSource can only work with a parallelism of 1.
@@ -70,7 +90,7 @@ public class KubernetesDynamicTableSource implements ScanTableSource {
 
     @Override
     public DynamicTableSource copy() {
-        return new KubernetesDynamicTableSource(configFile, sourceType, nameSpace, fieldSelector, labelSelector, decodingFormat, producedDataType);
+        return new KubernetesDynamicTableSource(authenticationType, basePath, ssl, caPath, clientCaPath, clientKeyPath, tokenPath, configFile, sourceType, nameSpace, fieldSelector, labelSelector, decodingFormat, producedDataType);
     }
 
     @Override

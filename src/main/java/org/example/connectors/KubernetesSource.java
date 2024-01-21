@@ -18,7 +18,10 @@ import io.kubernetes.client.util.CallGeneratorParams;
 import io.kubernetes.client.util.ClientBuilder;
 import io.kubernetes.client.util.KubeConfig;
 import io.kubernetes.client.util.Watch;
+import io.kubernetes.client.util.credentials.AccessTokenAuthentication;
+import io.kubernetes.client.util.credentials.ClientCertificateAuthentication;
 import okhttp3.OkHttpClient;
+import org.apache.commons.lang3.StringUtils;
 import org.apache.flink.api.common.serialization.DeserializationSchema;
 import org.apache.flink.api.connector.source.*;
 import org.apache.flink.core.io.InputStatus;
@@ -31,8 +34,11 @@ import org.example.connectors.KubernetesSource.DummyCheckpoint;
 import org.example.connectors.KubernetesSource.DummySplit;
 import org.example.informer.FlinkSharedIndexInformer;
 
+import java.io.BufferedReader;
 import java.io.FileReader;
 import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.*;
 import java.util.concurrent.*;
 import java.util.function.BiConsumer;
@@ -40,15 +46,29 @@ import java.util.function.BiConsumer;
 public class KubernetesSource
     implements Source<RowData, DummySplit,DummyCheckpoint> {
 
+    private final String authenticationType;
+    private final String basePath;
+    private Boolean ssl;
+    private String caPath;
+    final String clientCaPath;
+    final String clientKeyPath;
+    private String tokenPath;
     private final String configFile;
     private final String sourceType;
     private final String nameSpace;
     private final String fieldSelector;
     private final String labelSelector;
-    private SharedInformerFactory factory;
+    private SharedInformerFactory informerFactory;
     private final DeserializationSchema<RowData> deserializer;
 
     public KubernetesSource(
+            String authenticationType,
+            String basePath,
+            Boolean ssl,
+            String caPath,
+            String clientCaPath,
+            String clientKeyPath,
+            String tokenPath,
             String configFile,
             String sourceType,
             String nameSpace,
@@ -56,6 +76,13 @@ public class KubernetesSource
             String labelSelector,
             DeserializationSchema<RowData> deserializer
     ){
+        this.authenticationType = authenticationType;
+        this.basePath =  basePath;
+        this.ssl = ssl;
+        this.caPath = caPath;
+        this.clientCaPath = clientCaPath;
+        this.clientKeyPath = clientKeyPath;
+        this.tokenPath = tokenPath;
         this.configFile = configFile;
         this.sourceType = sourceType;
         this.nameSpace = nameSpace;
@@ -129,9 +156,61 @@ public class KubernetesSource
             queue = new LinkedBlockingDeque<>();
             // 创建并启动对应的informer
             try {
-                ApiClient client = ClientBuilder.kubeconfig(KubeConfig.loadKubeConfig(new FileReader(configFile))).build();
-                // 设置client为默认ApiClient
-                Configuration.setDefaultApiClient(client);
+                ApiClient client;
+                // 根据不同的认证方式创建client
+                switch(authenticationType){
+                    case "Kubeconfig":
+                        System.out.println("Kubeconfig");
+                        client = ClientBuilder.kubeconfig(KubeConfig.loadKubeConfig(new FileReader(configFile))).build();
+                        // 设置client为默认ApiClient
+                        Configuration.setDefaultApiClient(client);
+                        break;
+                    case "ClientCertificate":
+                        System.out.println("ClientCertificate");
+                        if(ssl){
+                            client = new ClientBuilder()
+                                    .setCertificateAuthority(Files.readAllBytes(Paths.get(caPath)))
+                                    .setBasePath(basePath)
+                                    .setAuthentication(new ClientCertificateAuthentication(Files.readAllBytes(Paths.get(clientCaPath)), Files.readAllBytes(Paths.get(clientKeyPath))))
+                                    .setVerifyingSsl(true)
+                                    .build();
+                        }
+                        else{
+                            client = new ClientBuilder()
+                                    .setBasePath(basePath)
+                                    .setAuthentication(new ClientCertificateAuthentication(Files.readAllBytes(Paths.get(clientCaPath)), Files.readAllBytes(Paths.get(clientKeyPath))))
+                                    .setVerifyingSsl(false)
+                                    .build();
+                        }
+                        // 设置client为默认ApiClient
+                        Configuration.setDefaultApiClient(client);
+                        break;
+                    case "AccessToken":
+                        System.out.println("AccessToken");
+                        if(ssl){
+                            System.out.println("use ssl!");
+                            client = new ClientBuilder()
+                                    .setCertificateAuthority(Files.readAllBytes(Paths.get(caPath)))
+                                    .setBasePath(basePath)
+                                    .setAuthentication(new AccessTokenAuthentication(new BufferedReader(new FileReader(tokenPath)).readLine()))
+                                    .setVerifyingSsl(true)
+                                    .build();
+                        }
+                        else{
+                            System.out.println("no ssl!");
+                            client = new ClientBuilder()
+                                    .setBasePath(basePath)
+                                    .setAuthentication(new AccessTokenAuthentication(new BufferedReader(new FileReader(tokenPath)).readLine()))
+                                    .setVerifyingSsl(false)
+                                    .build();
+                        }
+                        // 设置client为默认ApiClient
+                        Configuration.setDefaultApiClient(client);
+                        break;
+                    default:
+                        System.out.println("Unsupported authentication type!");
+                        throw new Exception("Unsupported authentication type!");
+                }
 
                 CoreV1Api coreV1Api = new CoreV1Api();
                 AppsV1Api appsV1Api = new AppsV1Api();
@@ -140,8 +219,9 @@ public class KubernetesSource
                 OkHttpClient httpClient = apiClient.getHttpClient().newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
                 apiClient.setHttpClient(httpClient);
 
+
                 // 创建informerFactory并重写SharedIndexInformer方法
-                factory = new SharedInformerFactory(apiClient){
+                informerFactory = new SharedInformerFactory(apiClient){
                     @Override
                     public synchronized <ApiType extends KubernetesObject, ApiListType extends KubernetesListObject> SharedIndexInformer<ApiType> sharedIndexInformerFor(ListerWatcher<ApiType, ApiListType> listerWatcher, Class<ApiType> apiTypeClass, long resyncPeriodInMillis, BiConsumer<Class<ApiType>, Throwable> exceptionHandler) {
                         SharedIndexInformer<ApiType> informer =
@@ -155,14 +235,14 @@ public class KubernetesSource
                 // 根据订阅的资源类型创建对应的informer
                 switch (sourceType){
                     case "Namespace":
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespaceCall(
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -176,15 +256,15 @@ public class KubernetesSource
                         break;
                     case "Pod":
                         System.out.println("Pod");
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespacedPodCall(
                                             nameSpace,
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -198,14 +278,14 @@ public class KubernetesSource
                         break;
                     case "Node":
                         System.out.println("Node");
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNodeCall(
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -219,15 +299,15 @@ public class KubernetesSource
                         break;
                     case "Service":
                         System.out.println("Service");
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespacedServiceCall(
                                             nameSpace,
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -241,15 +321,15 @@ public class KubernetesSource
                         break;
                     case "Deployment":
                         System.out.println("Service");
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return appsV1Api.listNamespacedDeploymentCall(
                                             nameSpace,
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -263,15 +343,15 @@ public class KubernetesSource
                         break;
                     case "Job":
                         System.out.println("Job");
-                        factory.sharedIndexInformerFor(
+                        informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return batchV1Api.listNamespacedJobCall(
                                             nameSpace,
                                             null,
                                             null,
                                             null,
-                                            fieldSelector,
-                                            labelSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
+                                            StringUtils.isEmpty(fieldSelector) ? null : fieldSelector,
                                             null,
                                             params.resourceVersion,
                                             null,
@@ -289,7 +369,7 @@ public class KubernetesSource
                 }
 
                 // 启动informer
-                factory.startAllRegisteredInformers();
+                informerFactory.startAllRegisteredInformers();
             } catch (Exception e) {
                 throw new RuntimeException(e);
             }
@@ -300,9 +380,10 @@ public class KubernetesSource
             JSON json = new JSON();
             Watch.Response data = queue.take();
             String serializeData = json.serialize(data);
-            System.out.println(serializeData);
+            //System.out.println("data:" + serializeData);
             try {
                 output.collect(deserializer.deserialize(serializeData.getBytes()));
+                //System.out.println("byte:" + serializeData.getBytes());
             } catch (Exception e) {
                 System.err.printf("\n" + e);
             }
@@ -332,7 +413,7 @@ public class KubernetesSource
         @Override
         public void close() throws Exception {
             try {
-                factory.stopAllRegisteredInformers();
+                informerFactory.stopAllRegisteredInformers();
                 queue.clear();
             } catch (Throwable t) {
                 System.out.println(t);
