@@ -246,7 +246,7 @@ public class FlinkSharedIndexInformer <
         this.processor.run();
 
         controllerThread.start();
-        System.out.println("informer run...");
+        System.out.println("informer starts running");
     }
 
     @Override

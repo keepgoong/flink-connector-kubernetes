@@ -119,7 +119,6 @@ public class KubernetesSource
 
     @Override
     public SourceReader<RowData, DummySplit> createReader(SourceReaderContext readerContext) throws Exception {
-        System.out.println("createReader");
         Preconditions.checkState(
                 readerContext.currentParallelism() == 1,
                 "KubernetesSource can only work with a parallelism of 1");
@@ -160,13 +159,13 @@ public class KubernetesSource
                 // 根据不同的认证方式创建client
                 switch(authenticationType){
                     case "Kubeconfig":
-                        System.out.println("Kubeconfig");
+                        System.out.println("authenticationType : Kubeconfig");
                         client = ClientBuilder.kubeconfig(KubeConfig.loadKubeConfig(new FileReader(configFile))).build();
                         // 设置client为默认ApiClient
                         Configuration.setDefaultApiClient(client);
                         break;
                     case "ClientCertificate":
-                        System.out.println("ClientCertificate");
+                        System.out.println("authenticationType : ClientCertificate");
                         if(ssl){
                             client = new ClientBuilder()
                                     .setCertificateAuthority(Files.readAllBytes(Paths.get(caPath)))
@@ -186,7 +185,7 @@ public class KubernetesSource
                         Configuration.setDefaultApiClient(client);
                         break;
                     case "AccessToken":
-                        System.out.println("AccessToken");
+                        System.out.println("authenticationType : AccessToken");
                         if(ssl){
                             System.out.println("use ssl!");
                             client = new ClientBuilder()
@@ -215,13 +214,22 @@ public class KubernetesSource
                 CoreV1Api coreV1Api = new CoreV1Api();
                 AppsV1Api appsV1Api = new AppsV1Api();
                 BatchV1Api batchV1Api = new BatchV1Api();
-                ApiClient apiClient = coreV1Api.getApiClient();
-                OkHttpClient httpClient = apiClient.getHttpClient().newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
-                apiClient.setHttpClient(httpClient);
+
+                ApiClient coreV1ApiClient = coreV1Api.getApiClient();
+                OkHttpClient coreV1HttpClient = coreV1ApiClient.getHttpClient().newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
+                coreV1ApiClient.setHttpClient(coreV1HttpClient);
+
+                ApiClient appsV1ApiClient = appsV1Api.getApiClient();
+                OkHttpClient appsV1HttpClient = appsV1ApiClient.getHttpClient().newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
+                appsV1ApiClient.setHttpClient(appsV1HttpClient);
+
+                ApiClient batchV1ApiClient = batchV1Api.getApiClient();
+                OkHttpClient batchV1HttpClient = batchV1ApiClient.getHttpClient().newBuilder().readTimeout(0, TimeUnit.SECONDS).build();
+                batchV1ApiClient.setHttpClient(batchV1HttpClient);
 
 
                 // 创建informerFactory并重写SharedIndexInformer方法
-                informerFactory = new SharedInformerFactory(apiClient){
+                informerFactory = new SharedInformerFactory(client){
                     @Override
                     public synchronized <ApiType extends KubernetesObject, ApiListType extends KubernetesListObject> SharedIndexInformer<ApiType> sharedIndexInformerFor(ListerWatcher<ApiType, ApiListType> listerWatcher, Class<ApiType> apiTypeClass, long resyncPeriodInMillis, BiConsumer<Class<ApiType>, Throwable> exceptionHandler) {
                         SharedIndexInformer<ApiType> informer =
@@ -235,6 +243,7 @@ public class KubernetesSource
                 // 根据订阅的资源类型创建对应的informer
                 switch (sourceType){
                     case "Namespace":
+                        System.out.println("sourceType : Namespace");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespaceCall(
@@ -255,7 +264,7 @@ public class KubernetesSource
                         );
                         break;
                     case "Pod":
-                        System.out.println("Pod");
+                        System.out.println("sourceType : Pod");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespacedPodCall(
@@ -277,7 +286,7 @@ public class KubernetesSource
                         );
                         break;
                     case "Node":
-                        System.out.println("Node");
+                        System.out.println("sourceType : Node");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNodeCall(
@@ -298,7 +307,7 @@ public class KubernetesSource
                         );
                         break;
                     case "Service":
-                        System.out.println("Service");
+                        System.out.println("sourceType : Service");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return coreV1Api.listNamespacedServiceCall(
@@ -320,7 +329,7 @@ public class KubernetesSource
                         );
                         break;
                     case "Deployment":
-                        System.out.println("Service");
+                        System.out.println("sourceType : Deployment");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return appsV1Api.listNamespacedDeploymentCall(
@@ -342,7 +351,7 @@ public class KubernetesSource
                         );
                         break;
                     case "Job":
-                        System.out.println("Job");
+                        System.out.println("sourceType : Job");
                         informerFactory.sharedIndexInformerFor(
                                 (CallGeneratorParams params) -> {
                                     return batchV1Api.listNamespacedJobCall(
